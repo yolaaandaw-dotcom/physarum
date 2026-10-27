@@ -12,6 +12,9 @@
   #stage { flex:1; display:flex; align-items:center; justify-content:center; min-width:0; }
   canvas#view { max-width:100%; max-height:100vh; cursor:crosshair; display:block; }
   #panel { width:238px; padding:16px 14px; background:var(--panel); overflow-y:auto; border-left:1px solid var(--line); }
+  body.nopanel #panel { display:none; }
+  #gear { position:fixed; top:12px; right:12px; width:34px; height:34px; border-radius:50%; background:rgba(20,22,16,0.7); color:var(--muted); border:1px solid var(--line); cursor:pointer; font-size:16px; line-height:32px; text-align:center; z-index:5; }
+  #gear:hover { color:var(--text); }
   h1 { font-size:14px; margin:0 0 2px; color:var(--accent); letter-spacing:.4px; font-weight:600; }
   .sub { color:var(--muted); font-size:11px; font-style:italic; margin-bottom:10px; }
   .hint { color:var(--muted); font-size:12px; margin-bottom:10px; }
@@ -37,7 +40,8 @@
   }
 </style>
 </head>
-<body>
+<body class="nopanel">
+<button id="gear" title="Settings (h)">⚙</button>
 <div id="stage"><canvas id="view"></canvas></div>
 <div id="panel">
   <h1>Physarum polycephalum</h1>
@@ -57,9 +61,9 @@
   </div>
 
   <label>Sensor angle SA <span id="vSA"></span></label>
-  <input type="range" id="sa" min="2" max="90" step="0.5" value="5">
+  <input type="range" id="sa" min="2" max="90" step="0.5" value="4">
   <label>Rotation angle RA <span id="vTA"></span></label>
-  <input type="range" id="ta" min="2" max="90" step="0.5" value="27.5">
+  <input type="range" id="ta" min="2" max="90" step="0.5" value="22">
   <label>Sensor offset SO <span id="vSD"></span></label>
   <input type="range" id="sd" min="2" max="30" step="1" value="3">
   <label>Trail damping <span id="vDE"></span></label>
@@ -67,7 +71,7 @@
   <label>Initial mass <span id="vMass"></span></label>
   <input type="range" id="mass" min="2000" max="120000" step="1000" value="20000">
   <label>Food yield (mass per oat) <span id="vYield"></span></label>
-  <input type="range" id="yield" min="0" max="40000" step="500" value="6000">
+  <input type="range" id="yield" min="0" max="40000" step="500" value="9000">
   <label>Starvation <span id="vStarve"></span></label>
   <input type="range" id="starve" min="0" max="5" step="0.1" value="1">
   <label>Division (every 5 steps) <span id="vGR"></span></label>
@@ -93,6 +97,9 @@
   <div class="row">
     <button id="randFood">Random oats</button>
     <button id="save" class="primary">Save PNG</button>
+  </div>
+  <div class="row">
+    <button id="autoBtn">Auto-feed: on</button>
   </div>
   <div class="stats" id="stats"></div>
 </div>
@@ -130,7 +137,7 @@
 
   let tick = 0;
   // ---------- parameters (paper values) ----------
-  const P = { sa: 5, ta: 27.5, sd: 3, de: 0.9, agents: 350000, mass: 20000, yield: 6000, starve: 1, gr: 1, cr: 20, th: 0.3, fs: 1, er: 4 };
+  const P = { sa: 4, ta: 22, sd: 3, de: 0.9, agents: 350000, mass: 20000, yield: 9000, starve: 1, gr: 1, cr: 20, th: 0.3, fs: 1, er: 4, auto: 1 };
   let energy = P.mass;   // particle budget, fed by oats
   const DEPOSIT = 5, GF = 5, GMAX = 36, CORE = 95, MAXN = 350000;
 
@@ -157,6 +164,13 @@
   // paper: particles at random positions over the whole dish, ~15% of sites
   function fillDish() { clearAll(); energy = Math.max(P.mass, 60000); spawnBlob(CX, CY, DR - 2, 0, Math.min(P.agents, Math.round(Math.PI * DR * DR * 0.156))); }
   function inoculate() { clearAll(); energy = P.mass; spawnBlob(CX, CY, 56, 0, Math.min(9000, P.mass)); }
+  function randomOat(minR = 0.3, maxR = 0.85) { const t = Math.random() * Math.PI * 2, d = (minR + Math.random() * (maxR - minR)) * (DR - 40); addFood(CX + Math.cos(t) * d, CY + Math.sin(t) * d); }
+  let emptySince = 0;
+  function autoFeed() {
+    if (!P.auto) return;
+    if (food.length) { emptySince = tick; return; }
+    if (tick - emptySince > 500) { randomOat(); emptySince = tick; }
+  }
   inoculate();
 
   // summed-area table of occupancy for O(1) neighbourhood counts
@@ -359,7 +373,7 @@
       }
     }
   }
-  function simStep() { starve(); if (scentDirty || (tick % 10 === 0 && food.length)) { updateScent(); scentDirty = false; } projectFood(); stepAgents(); diffuse(); buildSAT(); if (++tick % GF === 0) adapt(); }
+  function simStep() { autoFeed(); starve(); if (scentDirty || (tick % 10 === 0 && food.length)) { updateScent(); scentDirty = false; } projectFood(); stepAgents(); diffuse(); buildSAT(); if (++tick % GF === 0) adapt(); }
   function loop(t) {
     if (!paused) simStep();
     render();
@@ -412,19 +426,24 @@
   bind('fs', 'fs', 'vFS').addEventListener('input', () => scentDirty = true);
   bind('er', 'er', 'vER');
   document.getElementById('preCoarse').onclick = () => { setP('sa', 67.5); setP('ta', 67.5); setP('sd', 5); setP('cr', 22); setP('th', 1); };
-  document.getElementById('preBranch').onclick = () => { setP('sa', 5); setP('ta', 27.5); setP('sd', 3); setP('cr', 20); setP('th', 0.3); };
+  document.getElementById('preBranch').onclick = () => { setP('sa', 4); setP('ta', 22); setP('sd', 3); setP('cr', 20); setP('th', 0.3); };
 
   document.getElementById('pause').onclick = function () { paused = !paused; this.textContent = paused ? 'Play' : 'Pause'; };
   document.getElementById('clear').onclick = () => { trail.fill(0); trail2.fill(0); };
   document.getElementById('fill').onclick = () => { fillDish(); tick = 0; };
   document.getElementById('reset').onclick = () => { inoculate(); food.length = 0; scentDirty = true; tick = 0; };
+  document.getElementById('autoBtn').onclick = function () { P.auto = P.auto ? 0 : 1; this.textContent = 'Auto-feed: ' + (P.auto ? 'on' : 'off'); };
   document.getElementById('randFood').onclick = () => {
     for (let i = 0; i < 8; i++) { const t = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * (DR - 40); addFood(CX + Math.cos(t) * d, CY + Math.sin(t) * d); }
   };
   document.getElementById('save').onclick = () => {
     const a = document.createElement('a'); a.download = `physarum-${Date.now()}.png`; a.href = view.toDataURL('image/png'); a.click();
   };
+  const togglePanel = () => document.body.classList.toggle('nopanel');
+  document.getElementById('gear').onclick = togglePanel;
+  for (let i = 0; i < 4; i++) randomOat(0.45, 0.85);
   window.addEventListener('keydown', e => {
+    if (e.key === 'h') togglePanel();
     if (e.key === ' ') { e.preventDefault(); document.getElementById('pause').click(); }
     if (e.key === 'f') setMode('food'); if (e.key === 's') setMode('slime');
   });
