@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Physarum Slime Mold</title>
+<style>
+  :root { --bg:#050504; --panel:#0d0e0a; --text:#e9e4cf; --muted:#7f8370; --accent:#e9c92a; --line:#1e2017; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font: 13px/1.45 -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  body { display:flex; }
+  #stage { flex:1; display:flex; align-items:center; justify-content:center; min-width:0; }
+  canvas#view { max-width:100%; max-height:100vh; cursor:crosshair; display:block; }
+  #panel { width:238px; padding:16px 14px; background:var(--panel); overflow-y:auto; border-left:1px solid var(--line); }
+  h1 { font-size:14px; margin:0 0 2px; color:var(--accent); letter-spacing:.4px; font-weight:600; }
+  .sub { color:var(--muted); font-size:11px; font-style:italic; margin-bottom:10px; }
+  .hint { color:var(--muted); font-size:12px; margin-bottom:10px; }
+  .hint b { color:var(--text); font-weight:600; }
+  label { display:block; margin-top:9px; color:var(--muted); font-size:10.5px; text-transform:uppercase; letter-spacing:.6px; }
+  label span { float:right; color:var(--text); text-transform:none; }
+  input[type=range] { width:100%; accent-color:var(--accent); }
+  .row { display:flex; gap:6px; margin-top:8px; }
+  button { flex:1; background:#15170f; color:var(--text); border:1px solid #2a2d20; border-radius:6px; padding:7px 4px; cursor:pointer; font-size:12px; }
+  button:hover { background:#1f2217; }
+  button.primary { background:var(--accent); color:#1a1704; border-color:var(--accent); font-weight:600; }
+  .mode { display:flex; gap:4px; margin-top:8px; }
+  .mode button.on { background:var(--accent); color:#1a1704; border-color:var(--accent); font-weight:600; }
+  .stats { margin-top:12px; color:var(--muted); font-size:11px; font-variant-numeric: tabular-nums; }
+  hr { border:0; border-top:1px solid var(--line); margin:12px 0 2px; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#050504; --panel:#0d0e0a; --text:#e9e4cf; --muted:#7f8370; --accent:#e9c92a; --line:#1e2017; } }
+  :root[data-theme="dark"] { --bg:#050504; --panel:#0d0e0a; --text:#e9e4cf; --muted:#7f8370; --accent:#e9c92a; --line:#1e2017; }
+  @media (max-width: 700px) {
+    body { flex-direction: column; }
+    #stage { flex: none; }
+    canvas#view { max-height: 100vw; }
+    #panel { width: 100%; border-left: 0; border-top: 1px solid var(--line); padding: 14px 16px; }
+  }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="view"></canvas></div>
+<div id="panel">
+  <h1>Physarum polycephalum</h1>
+  <div class="sub">multi-agent model, Baumgarten · Jones · Hauser 2015</div>
+  <div class="hint">
+    <b>Click / drag</b> to drop oat flakes. <b>Shift + click</b> (or Slime mode) to inoculate.<br>
+    Mass comes only from oats: particles divide where they feed and at the growing front, and starve away over time. The colony follows the scent, relocates onto each oat it reaches, and leaves thinning veins behind.
+  </div>
+
+  <div class="mode">
+    <button id="mFood" class="on">Oats</button>
+    <button id="mSlime">Slime</button>
+  </div>
+  <div class="row">
+    <button id="preCoarse">Preset: coarsening</button>
+    <button id="preBranch">Preset: branching</button>
+  </div>
+
+  <label>Sensor angle SA <span id="vSA"></span></label>
+  <input type="range" id="sa" min="2" max="90" step="0.5" value="5">
+  <label>Rotation angle RA <span id="vTA"></span></label>
+  <input type="range" id="ta" min="2" max="90" step="0.5" value="27.5">
+  <label>Sensor offset SO <span id="vSD"></span></label>
+  <input type="range" id="sd" min="2" max="30" step="1" value="3">
+  <label>Trail damping <span id="vDE"></span></label>
+  <input type="range" id="de" min="0.5" max="0.99" step="0.01" value="0.9">
+  <label>Initial mass <span id="vMass"></span></label>
+  <input type="range" id="mass" min="2000" max="120000" step="1000" value="20000">
+  <label>Food yield (mass per oat) <span id="vYield"></span></label>
+  <input type="range" id="yield" min="0" max="40000" step="500" value="6000">
+  <label>Starvation <span id="vStarve"></span></label>
+  <input type="range" id="starve" min="0" max="5" step="0.1" value="1">
+  <label>Division (every 5 steps) <span id="vGR"></span></label>
+  <input type="range" id="gr" min="0" max="1" step="0.05" value="1">
+  <label>Crowd limit (5×5) <span id="vCR"></span></label>
+  <input type="range" id="cr" min="8" max="25" step="1" value="20">
+  <label>Thinning behind front <span id="vTH"></span></label>
+  <input type="range" id="th" min="0" max="1" step="0.05" value="0.3">
+  <label>Oat scent (reach) <span id="vFS"></span></label>
+  <input type="range" id="fs" min="0" max="3" step="0.1" value="1">
+  <label>Eat rate <span id="vER"></span></label>
+  <input type="range" id="er" min="0" max="10" step="0.5" value="4">
+
+  <hr>
+  <div class="row">
+    <button id="pause">Pause</button>
+    <button id="clear">Clear trail</button>
+  </div>
+  <div class="row">
+    <button id="fill">Fill dish</button>
+    <button id="reset">Inoculate</button>
+  </div>
+  <div class="row">
+    <button id="randFood">Random oats</button>
+    <button id="save" class="primary">Save PNG</button>
+  </div>
+  <div class="stats" id="stats"></div>
+</div>
+
+<script>
+(() => {
+  // ---------- lattice: circular petri dish inside a square lattice (1 cell = 1 px) ----------
+  const W = 900, H = 900, CX = W / 2, CY = H / 2, DR = 436;
+  const view = document.getElementById('view');
+  view.width = W; view.height = H;
+  const ctx = view.getContext('2d');
+  const img = ctx.createImageData(W, H);
+  const px = img.data;
+
+  let trail = new Float32Array(W * H);     // chemoattractant (sol flux), unbounded
+  let trail2 = new Float32Array(W * H);
+  const occ = new Uint8Array(W * H);       // one particle per lattice site
+  const dish = new Uint8Array(W * H);      // 1 inside the dish
+  const scent = new Float32Array(W * H);   // long-range oat scent (what the colony reaches toward)
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const dx = x - CX, dy = y - CY; dish[y * W + x] = dx * dx + dy * dy < DR * DR ? 1 : 0;
+  }
+  const idx = (x, y) => ((y | 0) * W + (x | 0));
+  const lowNoise = new Float32Array(W * H);
+  {
+    const G = 22, g = new Float32Array((G + 1) * (G + 1));
+    for (let i = 0; i < g.length; i++) g[i] = Math.random();
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const fx = x / W * G, fy = y / H * G, x0 = fx | 0, y0 = fy | 0, tx = fx - x0, ty = fy - y0;
+      const a = g[y0 * (G + 1) + x0], b = g[y0 * (G + 1) + x0 + 1], c = g[(y0 + 1) * (G + 1) + x0], d = g[(y0 + 1) * (G + 1) + x0 + 1];
+      lowNoise[y * W + x] = (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+    }
+  }
+  const inDish = (x, y) => dish[idx(x, y)] === 1;
+
+  let tick = 0;
+  // ---------- parameters (paper values) ----------
+  const P = { sa: 5, ta: 27.5, sd: 3, de: 0.9, agents: 350000, mass: 20000, yield: 6000, starve: 1, gr: 1, cr: 20, th: 0.3, fs: 1, er: 4 };
+  let energy = P.mass;   // particle budget, fed by oats
+  const DEPOSIT = 5, GF = 5, GMAX = 36, CORE = 95, MAXN = 350000;
+
+  // ---------- particles ----------
+  const ax = new Float32Array(MAXN), ay = new Float32Array(MAXN), aa = new Float32Array(MAXN), moved = new Uint8Array(MAXN), birth = new Int32Array(MAXN);
+  let order = new Uint32Array(MAXN);
+  let N = 0;
+  function placeAgent(i, x, y) {
+    if (x < 1 || x >= W - 1 || y < 1 || y >= H - 1 || !inDish(x, y)) return false;
+    const k = idx(x, y); if (occ[k]) return false;
+    ax[i] = x; ay[i] = y; aa[i] = Math.random() * Math.PI * 2; birth[i] = tick; occ[k] = 1; return true;
+  }
+  function spawnBlob(cx, cy, r, from, to) {
+    for (let i = from; i < to; i++) {
+      if (i < N) occ[idx(ax[i], ay[i])] = 0;
+      for (let tries = 0; tries < 12; tries++) {
+        const t = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * r;
+        if (placeAgent(i, cx + Math.cos(t) * d, cy + Math.sin(t) * d)) break;
+      }
+    }
+    if (to > N) N = to;
+  }
+  function clearAll() { trail.fill(0); trail2.fill(0); occ.fill(0); N = 0; }
+  // paper: particles at random positions over the whole dish, ~15% of sites
+  function fillDish() { clearAll(); energy = Math.max(P.mass, 60000); spawnBlob(CX, CY, DR - 2, 0, Math.min(P.agents, Math.round(Math.PI * DR * DR * 0.156))); }
+  function inoculate() { clearAll(); energy = P.mass; spawnBlob(CX, CY, 56, 0, Math.min(9000, P.mass)); }
+  inoculate();
+
+  // summed-area table of occupancy for O(1) neighbourhood counts
+  const SW = W + 1, sat = new Int32Array(SW * (H + 1));
+  function buildSAT() {
+    for (let y = 0; y < H; y++) {
+      let row = 0; const o = y * W, s0 = y * SW, s1 = (y + 1) * SW;
+      for (let x = 0; x < W; x++) { row += occ[o + x]; sat[s1 + x + 1] = sat[s0 + x + 1] + row; }
+    }
+  }
+  function count(x0, y0, x1, y1) {
+    x0 = x0 < 0 ? 0 : x0; y0 = y0 < 0 ? 0 : y0; x1 = x1 >= W ? W - 1 : x1; y1 = y1 >= H ? H - 1 : y1;
+    return sat[(y1 + 1) * SW + x1 + 1] - sat[y0 * SW + x1 + 1] - sat[(y1 + 1) * SW + x0] + sat[y0 * SW + x0];
+  }
+  function removeAgent(i) {
+    occ[idx(ax[i], ay[i])] = 0; N--;
+    ax[i] = ax[N]; ay[i] = ay[N]; aa[i] = aa[N]; moved[i] = moved[N]; birth[i] = birth[N];
+  }
+  // growth: 0..GMAX particles in 9x9 and moved successfully -> new particle in a random free 3x3 cell
+  // shrinkage: survive only if <= crowd particles in 5x5
+  const NB = [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]];
+  function adapt() {
+    const crowd = P.cr, g = P.gr;
+    for (let i = N - 1; i >= 0; i--) {
+      const x = ax[i] | 0, y = ay[i] | 0;
+      if (crowd < 25 && P.th > 0) {
+        if (Math.random() < P.th && count(x - 2, y - 2, x + 2, y + 2) > crowd) { removeAgent(i); continue; }
+      }
+      if (moved[i] && N < energy && N < MAXN) {
+        let onFood = false;
+        for (let f = 0; f < food.length; f++) { const fo = food[f], r = foodRadius(fo) * 3, dx = x - fo.x, dy = y - fo.y; if (dx * dx + dy * dy < r * r) { onFood = true; break; } }
+        if (onFood) { if (Math.random() > g * 0.7) continue; }
+        else {
+          if (count(x - 4, y - 4, x + 4, y + 4) > GMAX || count(x - 10, y - 10, x + 10, y + 10) > 150) continue;
+          const sn = Math.min(1, scent[y * W + x] / (P.fs * 12 + 1e-6));
+          if (Math.random() > g * (0.12 + 0.88 * sn)) continue;
+        }
+        const s0 = (Math.random() * 8) | 0;
+        for (let j = 0; j < 8; j++) {
+          const d = NB[(s0 + j) & 7];
+          if (placeAgent(N, x + d[0] + 0.5, y + d[1] + 0.5)) { N++; break; }
+        }
+      }
+    }
+  }
+
+  // ---------- oats (Jones 2011: stimuli projected into the chemoattractant map every step) ----------
+  const food = [];
+  function addFood(x, y) {
+    if (!inDish(x, y)) return;
+    const i = food.findIndex(f => Math.hypot(f.x - x, f.y - y) < 12);
+    if (i >= 0) food[i].amount = Math.min(1.5, food[i].amount + 0.3);
+    else food.push({ x, y, amount: 1, seed: Math.random() * 1000 });
+    scentDirty = true;
+  }
+  const foodRadius = f => 4 + 8 * Math.sqrt(Math.max(f.amount, 0));
+  let scentDirty = true;
+  function updateScent() {
+    const SIG2 = 165 * 165; scent.fill(0);
+    if (P.fs <= 0) return;
+    for (const fo of food) {
+      const s = P.fs * 12 * fo.amount;
+      for (let y = 0; y < H; y++) {
+        const dy = y - fo.y, dy2 = dy * dy, row = y * W;
+        for (let x = 0; x < W; x++) { const dx = x - fo.x; scent[row + x] += s * SIG2 / (SIG2 + dx * dx + dy2); }
+      }
+    }
+  }
+  function projectFood() {
+    if (P.fs <= 0) return;
+    for (const fo of food) {
+      const r = foodRadius(fo) + 3, r2 = r * r, s = P.fs * DEPOSIT * 0.6 * fo.amount;
+      const x0 = Math.max(0, fo.x - r | 0), x1 = Math.min(W - 1, fo.x + r | 0);
+      const y0 = Math.max(0, fo.y - r | 0), y1 = Math.min(H - 1, fo.y + r | 0);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const dx = x - fo.x, dy = y - fo.y, d2 = dx * dx + dy * dy;
+        if (d2 < r2) trail[y * W + x] += s * (1 - d2 / r2);
+      }
+    }
+  }
+
+  // ---------- particle algorithm ----------
+  function sense(x, y, a, so) {
+    const sx = x + Math.cos(a) * so, sy = y + Math.sin(a) * so;
+    if (sx < 0 || sx >= W || sy < 0 || sy >= H) return 0;
+    const k = idx(sx, sy); return trail[k] + scent[k];
+  }
+  function shuffle() {
+    for (let i = 0; i < N; i++) order[i] = i;
+    for (let i = N - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; const t = order[i]; order[i] = order[j]; order[j] = t; }
+  }
+  function stepAgents() {
+    const SA = P.sa * Math.PI / 180, RA = P.ta * Math.PI / 180;
+    const eat = P.er * 2e-6;
+    shuffle();
+    for (let n = 0; n < N; n++) {
+      const i = order[n];
+      let x = ax[i], y = ay[i], a = aa[i];
+      // sensory stage
+      const so = P.sd * (1 + 1.3 * Math.min(1, (tick - birth[i]) / 2500));
+      const F = sense(x, y, a, so), L = sense(x, y, a - SA, so), R = sense(x, y, a + SA, so);
+      if (F > L && F > R) { }
+      else if (F < L && F < R) a += (Math.random() < 0.5 ? -RA : RA);
+      else if (L > R) a -= RA;
+      else if (R > L) a += RA;
+      // motor stage: one cell forward if free, otherwise abandon and pick a random direction
+      const nx = x + Math.cos(a), ny = y + Math.sin(a);
+      const k0 = idx(x, y), k = idx(nx, ny);
+      if (k !== k0) {
+        if (nx < 1 || nx >= W - 1 || ny < 1 || ny >= H - 1 || !dish[k] || occ[k]) { aa[i] = Math.random() * Math.PI * 2; moved[i] = 0; continue; }
+        occ[k0] = 0; occ[k] = 1;
+      }
+      moved[i] = 1;
+      trail[k] += DEPOSIT;
+      if (eat > 0 && food.length) {
+        for (let f = 0; f < food.length; f++) {
+          const fo = food[f], r = foodRadius(fo), dx = nx - fo.x, dy = ny - fo.y;
+          if (dx * dx + dy * dy < r * r) { fo.amount -= eat; energy += eat * P.yield; break; }
+        }
+      }
+      ax[i] = nx; ay[i] = ny; aa[i] = a;
+    }
+    for (let f = food.length - 1; f >= 0; f--) if (food[f].amount <= 0) { food.splice(f, 1); scentDirty = true; }
+  }
+  // 3x3 mean filter, then multiply by damping; absorbing outside the dish
+  function diffuse() {
+    const keep = P.de / 9;
+    for (let y = 0; y < H; y++) {
+      const ym = (y > 0 ? y - 1 : y) * W, yc = y * W, yp = (y < H - 1 ? y + 1 : y) * W;
+      for (let x = 0; x < W; x++) {
+        if (!dish[yc + x]) { trail2[yc + x] = 0; continue; }
+        const xm = x > 0 ? x - 1 : x, xp = x < W - 1 ? x + 1 : x;
+        trail2[yc + x] = (trail[ym + xm] + trail[ym + x] + trail[ym + xp]
+                        + trail[yc + xm] + trail[yc + x] + trail[yc + xp]
+                        + trail[yp + xm] + trail[yp + x] + trail[yp + xp]) * keep;
+      }
+    }
+    const t = trail; trail = trail2; trail2 = t;
+  }
+
+  // ---------- rendering: flux (trail) + mass (particle density) ----------
+  const stops = [[5,5,4],[64,40,8],[160,104,18],[224,176,32],[252,220,70],[255,250,210]];
+  const LUT = new Uint8ClampedArray(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255 * (stops.length - 1), j = Math.min(stops.length - 2, t | 0), f = t - j;
+    for (let c = 0; c < 3; c++) LUT[i * 3 + c] = stops[j][c] + (stops[j + 1][c] - stops[j][c]) * f;
+  }
+  const AGAR = [14, 15, 11];
+  const grain = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) grain[i] = 0.86 + Math.random() * 0.28;
+  const LOGK = 1 / Math.log(1 + 60);
+  function render() {
+    for (let y = 0, i = 0, p = 0; y < H; y++) for (let x = 0; x < W; x++, i++, p += 4) {
+      if (!dish[i]) { px[p] = 5; px[p + 1] = 5; px[p + 2] = 4; px[p + 3] = 255; continue; }
+      let v = Math.log(1 + trail[i]) * LOGK; if (v > 1) v = 1;           // flux: thick veins bright, filaments still visible
+      const dens = count(x - 1, y - 1, x + 1, y + 1) / 9;
+      let m = Math.sqrt(dens) * 0.62 + occ[i] * 0.22;                      // mass: smooth sheet plus per-particle grain
+      m *= grain[i];
+      if (m > v) v = m;
+      if (v > 1) v = 1;
+      const li = (v * 255) | 0;
+      px[p] = Math.max(AGAR[0], LUT[li * 3]); px[p + 1] = Math.max(AGAR[1], LUT[li * 3 + 1]); px[p + 2] = Math.max(AGAR[2], LUT[li * 3 + 2]); px[p + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    ctx.strokeStyle = 'rgba(255,240,180,0.12)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(CX, CY, DR + 1, 0, Math.PI * 2); ctx.stroke();
+    for (const fo of food) {
+      const r = foodRadius(fo), x = fo.x, y = fo.y;
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 6; ctx.shadowOffsetY = 1;
+      ctx.fillStyle = '#efe3b2';
+      ctx.beginPath();
+      for (let k = 0; k <= 24; k++) {
+        const t = k / 24 * Math.PI * 2;
+        const rr = r * (0.88 + 0.12 * Math.sin(t * 3 + fo.seed) + 0.07 * Math.sin(t * 7 + fo.seed * 2));
+        k ? ctx.lineTo(x + Math.cos(t) * rr, y + Math.sin(t) * rr) : ctx.moveTo(x + Math.cos(t) * rr, y + Math.sin(t) * rr);
+      }
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = 'rgba(214,190,120,0.6)';
+      ctx.beginPath(); ctx.arc(x - r * 0.2, y - r * 0.15, r * 0.35, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // ---------- scheduler ----------
+  let paused = false, frames = 0, lastT = performance.now(), fps = 0;
+  function starve() {
+    energy = Math.max(400, energy * (1 - P.starve * 0.0003));
+    if (N > energy) {
+      let k = Math.ceil((N - energy) * 0.03);
+      const sMax = P.fs * 12 + 1e-6;
+      while (k-- > 0 && N > 400) {
+        let i = (Math.random() * N) | 0;
+        for (let t = 0; t < 3; t++) {            // prefer particles far from any scent
+          const sn = Math.min(1, scent[idx(ax[i], ay[i])] / sMax);
+          if (Math.random() > sn) break;
+          i = (Math.random() * N) | 0;
+        }
+        removeAgent(i);
+      }
+    }
+  }
+  function simStep() { starve(); if (scentDirty || (tick % 10 === 0 && food.length)) { updateScent(); scentDirty = false; } projectFood(); stepAgents(); diffuse(); buildSAT(); if (++tick % GF === 0) adapt(); }
+  function loop(t) {
+    if (!paused) simStep();
+    render();
+    frames++;
+    if (t - lastT > 500) { fps = Math.round(frames * 1000 / (t - lastT)); frames = 0; lastT = t; }
+    document.getElementById('stats').textContent = `${N.toLocaleString()} particles · budget ${Math.round(energy).toLocaleString()} · ${food.length} oats · ${fps} fps`;
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+  window.__sim = { get N() { return N; }, step(n = 1) { const t0 = performance.now(); for (let i = 0; i < n; i++) simStep(); render(); return (performance.now() - t0) / n; }, addFood, food, P, fillDish, inoculate, W, H, dirty() { scentDirty = true; }, get energy() { return energy; } };
+
+  // ---------- input ----------
+  let mode = 'food';
+  const mFood = document.getElementById('mFood'), mSlime = document.getElementById('mSlime');
+  function setMode(m) { mode = m; mFood.classList.toggle('on', m === 'food'); mSlime.classList.toggle('on', m === 'slime'); }
+  mFood.onclick = () => setMode('food'); mSlime.onclick = () => setMode('slime');
+  function toGrid(e) { const r = view.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H]; }
+  function place(e) {
+    const [x, y] = toGrid(e);
+    if (mode === 'slime' || e.shiftKey) {
+      const n = 1500;
+      if (N + n <= P.agents) spawnBlob(x, y, 22, N, N + n);
+      else { const from = Math.floor(Math.random() * (N - n)); spawnBlob(x, y, 22, from, from + n); }
+    } else addFood(x, y);
+  }
+  let down = false, lastPlace = 0;
+  view.addEventListener('pointerdown', e => { down = true; place(e); lastPlace = performance.now(); e.preventDefault(); });
+  view.addEventListener('pointermove', e => { if (down && performance.now() - lastPlace > 120) { place(e); lastPlace = performance.now(); } });
+  window.addEventListener('pointerup', () => down = false);
+  view.addEventListener('contextmenu', e => e.preventDefault());
+
+  // ---------- controls ----------
+  const els = {};
+  const bind = (id, key, label, fmt = v => v) => {
+    const el = document.getElementById(id), out = document.getElementById(label);
+    const upd = () => { P[key] = parseFloat(el.value); out.textContent = fmt(P[key]); };
+    el.addEventListener('input', upd); upd(); els[key] = { el, upd }; return el;
+  };
+  const setP = (key, v) => { els[key].el.value = v; els[key].upd(); };
+  bind('sa', 'sa', 'vSA', v => v + '°');
+  bind('ta', 'ta', 'vTA', v => v + '°');
+  bind('sd', 'sd', 'vSD', v => v + ' px');
+  bind('de', 'de', 'vDE');
+  bind('mass', 'mass', 'vMass', v => v.toLocaleString());
+  bind('yield', 'yield', 'vYield', v => v.toLocaleString());
+  bind('starve', 'starve', 'vStarve');
+  bind('gr', 'gr', 'vGR');
+  bind('cr', 'cr', 'vCR', v => v >= 25 ? 'off' : v);
+  bind('th', 'th', 'vTH');
+  bind('fs', 'fs', 'vFS').addEventListener('input', () => scentDirty = true);
+  bind('er', 'er', 'vER');
+  document.getElementById('preCoarse').onclick = () => { setP('sa', 67.5); setP('ta', 67.5); setP('sd', 5); setP('cr', 22); setP('th', 1); };
+  document.getElementById('preBranch').onclick = () => { setP('sa', 5); setP('ta', 27.5); setP('sd', 3); setP('cr', 20); setP('th', 0.3); };
+
+  document.getElementById('pause').onclick = function () { paused = !paused; this.textContent = paused ? 'Play' : 'Pause'; };
+  document.getElementById('clear').onclick = () => { trail.fill(0); trail2.fill(0); };
+  document.getElementById('fill').onclick = () => { fillDish(); tick = 0; };
+  document.getElementById('reset').onclick = () => { inoculate(); food.length = 0; scentDirty = true; tick = 0; };
+  document.getElementById('randFood').onclick = () => {
+    for (let i = 0; i < 8; i++) { const t = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * (DR - 40); addFood(CX + Math.cos(t) * d, CY + Math.sin(t) * d); }
+  };
+  document.getElementById('save').onclick = () => {
+    const a = document.createElement('a'); a.download = `physarum-${Date.now()}.png`; a.href = view.toDataURL('image/png'); a.click();
+  };
+  window.addEventListener('keydown', e => {
+    if (e.key === ' ') { e.preventDefault(); document.getElementById('pause').click(); }
+    if (e.key === 'f') setMode('food'); if (e.key === 's') setMode('slime');
+  });
+})();
+</script>
+</body>
+</html>
